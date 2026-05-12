@@ -1855,9 +1855,147 @@ class TestExtractThinkingConfigFromAnthropic:
     
 
 
+class TestEffortToThinkingBudget:
+    """Tests for effort level → thinking budget mapping."""
+
+    def test_effort_low(self):
+        """Effort 'low' → 10% of FAKE_REASONING_BUDGET_CAP."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "low"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 1000
+
+    def test_effort_medium(self):
+        """Effort 'medium' → 30% of FAKE_REASONING_BUDGET_CAP."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "medium"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 3000
+
+    def test_effort_high(self):
+        """Effort 'high' → 60% of FAKE_REASONING_BUDGET_CAP."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "high"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 6000
+
+    def test_effort_xhigh(self):
+        """Effort 'xhigh' → 80% of FAKE_REASONING_BUDGET_CAP."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "xhigh"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 8000
+
+    def test_effort_max(self):
+        """Effort 'max' → 100% of FAKE_REASONING_BUDGET_CAP."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "max"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 10000
+
+    def test_thinking_takes_priority_over_effort(self):
+        """Explicit thinking.budget_tokens overrides effort level."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            thinking={"type": "enabled", "budget_tokens": 5000},
+            output_config={"effort": "max"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens == 5000
+
+    def test_thinking_disabled_overrides_effort(self):
+        """Explicit thinking.type='disabled' overrides effort level."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            thinking={"type": "disabled"},
+            output_config={"effort": "max"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 10000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is False
+        assert config.budget_tokens is None
+
+    def test_no_effort_no_thinking_uses_defaults(self):
+        """No effort and no thinking → defaults (budget_tokens=None)."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+        )
+
+        config = extract_thinking_config_from_anthropic(request)
+
+        assert config.enabled is True
+        assert config.budget_tokens is None
+
+    def test_effort_scales_with_custom_cap(self):
+        """Effort percentages scale correctly with non-default cap."""
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4.5",
+            messages=[AnthropicMessage(role="user", content="test")],
+            max_tokens=1024,
+            output_config={"effort": "high"},
+        )
+
+        with patch("kiro.converters_anthropic.FAKE_REASONING_BUDGET_CAP", 20000):
+            config = extract_thinking_config_from_anthropic(request)
+
+        assert config.budget_tokens == 12000
+
+
 class TestAnthropicToKiroIntegration:
     """Integration tests for anthropic_to_kiro with thinking config."""
-    
+
     def test_extracts_and_passes_thinking_config(self):
         """
         What it does: Verifies anthropic_to_kiro extracts thinking_config and passes to core

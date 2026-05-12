@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from kiro.config import HIDDEN_MODELS
+from kiro.config import HIDDEN_MODELS, FAKE_REASONING_BUDGET_CAP
 from kiro.model_resolver import get_model_id_for_kiro
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
@@ -43,6 +43,15 @@ from kiro.converters_core import (
     extract_text_content,
     extract_images_from_content,
 )
+
+
+EFFORT_TO_CAP_PERCENT = {
+    "low": 0.10,
+    "medium": 0.30,
+    "high": 0.60,
+    "xhigh": 0.80,
+    "max": 1.0,
+}
 
 
 def convert_anthropic_content_to_text(content: Any) -> str:
@@ -401,28 +410,31 @@ def extract_thinking_config_from_anthropic(request: AnthropicMessagesRequest) ->
         >>> extract_thinking_config_from_anthropic(request)
         ThinkingConfig(enabled=True, budget_tokens=8000)
     """
-    if not request.thinking:
-        # No thinking specified → use defaults
-        return ThinkingConfig(enabled=True, budget_tokens=None)
-    
-    if not isinstance(request.thinking, dict):
-        # Invalid format → use defaults
-        return ThinkingConfig(enabled=True, budget_tokens=None)
-    
-    thinking_type = request.thinking.get("type")
-    
-    if thinking_type == "disabled":
-        # Explicitly disabled
-        return ThinkingConfig(enabled=False, budget_tokens=None)
-    
-    if thinking_type == "enabled":
-        # Extract budget_tokens
-        budget = request.thinking.get("budget_tokens")
-        if budget:
-            logger.debug(f"Extracted thinking config from Anthropic: type='enabled', budget={budget}")
+    # Priority 1: Explicit thinking parameter (most specific)
+    if request.thinking and isinstance(request.thinking, dict):
+        thinking_type = request.thinking.get("type")
+
+        if thinking_type == "disabled":
+            return ThinkingConfig(enabled=False, budget_tokens=None)
+
+        if thinking_type == "enabled":
+            budget = request.thinking.get("budget_tokens")
+            if budget:
+                logger.debug(f"Extracted thinking config from Anthropic: type='enabled', budget={budget}")
+            return ThinkingConfig(enabled=True, budget_tokens=budget)
+
+    # Priority 2: Derive budget from effort level (percentage of cap)
+    effort = None
+    output_config = getattr(request, "output_config", None)
+    if isinstance(output_config, dict):
+        effort = output_config.get("effort")
+
+    if effort and effort in EFFORT_TO_CAP_PERCENT:
+        budget = int(FAKE_REASONING_BUDGET_CAP * EFFORT_TO_CAP_PERCENT[effort])
+        logger.debug(f"Effort '{effort}' → thinking budget {budget} ({int(EFFORT_TO_CAP_PERCENT[effort] * 100)}% of {FAKE_REASONING_BUDGET_CAP})")
         return ThinkingConfig(enabled=True, budget_tokens=budget)
-    
-    # Unknown type → use defaults
+
+    # Priority 3: Defaults (FAKE_REASONING_MAX_TOKENS applied downstream)
     return ThinkingConfig(enabled=True, budget_tokens=None)
 
 
