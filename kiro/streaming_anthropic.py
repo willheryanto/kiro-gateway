@@ -474,7 +474,31 @@ async def stream_kiro_to_anthropic(
                         "name": tool_name,
                         "truncation_info": tool.get('_truncation_info', {})
                     })
-                
+
+                    # Emit text block to inform client about truncation
+                    truncation_info = tool.get('_truncation_info', {})
+                    notice = (
+                        f"[API Limitation] The `{tool_name}` tool call was truncated by the upstream API "
+                        f"({truncation_info.get('size_bytes', '?')} bytes received, {truncation_info.get('reason', 'unknown reason')}). "
+                        f"The tool call parameters are incomplete — the error below is a consequence of truncation, not a bug."
+                    )
+
+                    yield format_sse_event("content_block_start", {
+                        "type": "content_block_start",
+                        "index": current_block_index,
+                        "content_block": {"type": "text", "text": ""}
+                    })
+                    yield format_sse_event("content_block_delta", {
+                        "type": "content_block_delta",
+                        "index": current_block_index,
+                        "delta": {"type": "text_delta", "text": notice}
+                    })
+                    yield format_sse_event("content_block_stop", {
+                        "type": "content_block_stop",
+                        "index": current_block_index
+                    })
+                    current_block_index += 1
+
                 # Parse arguments if string
                 if isinstance(tool_input, str):
                     try:
