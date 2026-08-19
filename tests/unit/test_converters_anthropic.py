@@ -1099,6 +1099,54 @@ class TestConvertAnthropicMessages:
         print(f"Comparing result: Expected [], Got {result}")
         assert result == []
 
+    def test_attaches_mid_conversation_system_to_preceding_user(self):
+        """
+        What it does: Lowers a user/system pair into one unified user turn.
+        Purpose: Preserve Claude Code's mid-conversation instruction without
+                 creating a fake user or assistant message.
+        """
+        print("Setup: Claude Code user/system message pair...")
+        messages = [
+            AnthropicMessage(role="user", content="Inspect the repository"),
+            AnthropicMessage(
+                role="system",
+                content=[
+                    {
+                        "type": "text",
+                        "text": "Follow the repository instructions.",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            ),
+        ]
+
+        print("Action: Converting messages...")
+        result = convert_anthropic_messages(messages)
+
+        print("Checking one user turn retains both content channels...")
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert result[0].content == "Inspect the repository"
+        assert (
+            result[0].mid_conversation_system
+            == "Follow the repository instructions."
+        )
+
+    def test_rejects_misplaced_mid_conversation_system_defensively(self):
+        """
+        What it does: Calls the converter directly with a leading system message.
+        Purpose: Keep conversion safe even when invoked without request validation.
+        """
+        print("Setup: Misplaced leading system message...")
+        messages = [AnthropicMessage(role="system", content="Instruction")]
+
+        print("Action: Converting invalid placement...")
+        with pytest.raises(
+            ValueError,
+            match="must immediately follow a user message",
+        ):
+            convert_anthropic_messages(messages)
+
     # ==================================================================================
     # Image extraction tests (Issue #30 fix)
     # ==================================================================================
@@ -1498,6 +1546,102 @@ class TestAnthropicToKiro:
         ]["content"]
         print(f"Current content: {current_content}")
         assert "You are a helpful assistant." in current_content
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_lowers_mid_conversation_system_into_current_user_turn(self, stream):
+        """
+        What it does: Converts Claude Code's current user/system request shape.
+        Purpose: Ensure both streaming modes produce a valid Kiro current message
+                 without synthetic conversation turns.
+        """
+        print(f"Setup: Claude Code request with stream={stream}...")
+        request = AnthropicMessagesRequest(
+            model="claude-opus-5",
+            messages=[
+                AnthropicMessage(role="user", content="Inspect the repository"),
+                AnthropicMessage(
+                    role="system",
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "Follow repository instructions.",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                ),
+            ],
+            max_tokens=64000,
+            stream=stream,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "high"},
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-opus-5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(
+                    request,
+                    "conv-123",
+                    "arn:aws:test",
+                )
+
+        print("Checking current content and absence of synthetic history...")
+        current_content = result["conversationState"]["currentMessage"][
+            "userInputMessage"
+        ]["content"]
+        expected_suffix = (
+            "Inspect the repository\n\n"
+            "<mid_conversation_system>\n"
+            "Follow repository instructions.\n"
+            "</mid_conversation_system>"
+        )
+        assert current_content.endswith(expected_suffix)
+        assert "history" not in result["conversationState"]
+
+    def test_preserves_mid_conversation_system_in_history(self):
+        """
+        What it does: Converts a system instruction attached to an earlier turn.
+        Purpose: Ensure history rendering preserves temporal placement.
+        """
+        print("Setup: Conversation with an instructed historical user turn...")
+        request = AnthropicMessagesRequest(
+            model="claude-opus-5",
+            messages=[
+                AnthropicMessage(role="user", content="First question"),
+                AnthropicMessage(role="system", content="Late instruction"),
+                AnthropicMessage(role="assistant", content="First answer"),
+                AnthropicMessage(role="user", content="Second question"),
+            ],
+            max_tokens=1024,
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-opus-5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(
+                    request,
+                    "conv-123",
+                    "arn:aws:test",
+                )
+
+        print("Checking instruction remains on the first historical user turn...")
+        history = result["conversationState"]["history"]
+        first_content = history[0]["userInputMessage"]["content"]
+        assert first_content.endswith(
+            "<mid_conversation_system>\n"
+            "Late instruction\n"
+            "</mid_conversation_system>"
+        )
+        assert history[1]["assistantResponseMessage"]["content"] == "First answer"
+        assert result["conversationState"]["currentMessage"]["userInputMessage"][
+            "content"
+        ] == "Second question"
 
     def test_includes_tools(self):
         """

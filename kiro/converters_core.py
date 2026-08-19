@@ -95,12 +95,15 @@ class UnifiedMessage:
         tool_results: List of tool results (for user messages with tool responses)
         images: List of images in unified format (for multimodal user messages)
                 Format: [{"media_type": "image/jpeg", "data": "base64..."}]
+        mid_conversation_system: Privileged instruction that followed this user
+            turn in an Anthropic Messages request.
     """
     role: str
     content: Any = ""
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_results: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[Dict[str, Any]]] = None
+    mid_conversation_system: Optional[str] = None
 
 
 @dataclass
@@ -974,7 +977,8 @@ def strip_all_tool_content(messages: List[UnifiedMessage]) -> Tuple[List[Unified
                 content=content,
                 tool_calls=None,
                 tool_results=None,
-                images=msg.images
+                images=msg.images,
+                mid_conversation_system=msg.mid_conversation_system,
             )
             result.append(cleaned_msg)
         else:
@@ -1057,7 +1061,8 @@ def ensure_assistant_before_tool_results(messages: List[UnifiedMessage]) -> Tupl
                     content=new_content,
                     tool_calls=msg.tool_calls,
                     tool_results=None,  # Remove orphaned tool_results (now in text)
-                    images=msg.images
+                    images=msg.images,
+                    mid_conversation_system=msg.mid_conversation_system,
                 )
                 result.append(cleaned_msg)
                 converted_any_tool_results = True
@@ -1096,7 +1101,7 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
             continue
         
         last = merged[-1]
-        if msg.role == last.role:
+        if msg.role == last.role and not last.mid_conversation_system:
             # Merge content
             if isinstance(last.content, list) and isinstance(msg.content, list):
                 last.content = last.content + msg.content
@@ -1122,6 +1127,12 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                     last.tool_results = []
                 last.tool_results = list(last.tool_results) + list(msg.tool_results)
                 total_tool_results_merged += len(msg.tool_results)
+
+            # A system instruction follows the merged user content. Do not
+            # merge a later message into a user turn that already has one,
+            # because doing so would move the instruction out of position.
+            if msg.mid_conversation_system:
+                last.mid_conversation_system = msg.mid_conversation_system
             
             # Count merges by role
             if msg.role in merge_counts:
@@ -1243,7 +1254,8 @@ def normalize_message_roles(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 content=msg.content,
                 tool_calls=msg.tool_calls,
                 tool_results=msg.tool_results,
-                images=msg.images
+                images=msg.images,
+                mid_conversation_system=msg.mid_conversation_system,
             )
             normalized.append(normalized_msg)
             converted_count += 1
@@ -1317,6 +1329,37 @@ def ensure_alternating_roles(messages: List[UnifiedMessage]) -> List[UnifiedMess
 # Kiro History Building
 # ==================================================================================================
 
+def render_message_content(message: UnifiedMessage) -> str:
+    """
+    Render unified message content for Kiro's text-only role representation.
+
+    Kiro conversation history has no system role. Anthropic mid-conversation
+    system instructions are therefore appended to the user turn they followed,
+    using explicit tags so the compatibility transformation remains visible to
+    the model while preserving the original user content and instruction order.
+
+    Args:
+        message: Unified message to render.
+
+    Returns:
+        Text content with any attached mid-conversation system instruction.
+    """
+    content = extract_text_content(message.content)
+    instruction = message.mid_conversation_system
+    if not instruction:
+        return content
+
+    rendered_instruction = (
+        "<mid_conversation_system>\n"
+        f"{instruction}\n"
+        "</mid_conversation_system>"
+    )
+    if not content:
+        return rendered_instruction
+
+    return f"{content}\n\n{rendered_instruction}"
+
+
 def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Dict[str, Any]]:
     """
     Builds history array for Kiro API from unified messages.
@@ -1338,7 +1381,7 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
     
     for msg in messages:
         if msg.role == "user":
-            content = extract_text_content(msg.content)
+            content = render_message_content(msg)
             
             # Fallback for empty content - Kiro API requires non-empty content
             if not content:
@@ -1496,7 +1539,7 @@ def build_kiro_payload(
     
     # Current message (the last one)
     current_message = merged_messages[-1]
-    current_content = extract_text_content(current_message.content)
+    current_content = render_message_content(current_message)
     
     # If system prompt exists but history is empty - add to current message
     if full_system_prompt and not history:

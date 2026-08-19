@@ -38,6 +38,7 @@ from kiro.models_anthropic import (
     # Request models
     SystemContentBlock,
     AnthropicMessagesRequest,
+    AnthropicCountTokensRequest,
     # Response models
     AnthropicUsage,
     AnthropicMessagesResponse,
@@ -62,6 +63,97 @@ from kiro.models_anthropic import (
 
 # Base64 1x1 pixel JPEG for testing
 TEST_IMAGE_BASE64 = "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q=="
+
+
+# ==================================================================================================
+# Tests for Mid-Conversation System Messages
+# ==================================================================================================
+
+class TestMidConversationSystemMessages:
+    """Tests for Anthropic mid-conversation system message validation."""
+
+    def test_accepts_system_message_immediately_after_user(self):
+        """
+        What it does: Validates the message shape emitted by current Claude Code.
+        Purpose: Ensure supported mid-conversation system instructions do not
+                 fail request validation with HTTP 422.
+        """
+        print("Setup: Creating request with user followed by system...")
+        request = AnthropicMessagesRequest(
+            model="claude-opus-5",
+            max_tokens=64000,
+            messages=[
+                AnthropicMessage(role="user", content="Inspect the repository"),
+                AnthropicMessage(
+                    role="system",
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "Use the repository instructions.",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                ),
+            ],
+            thinking={"type": "adaptive"},
+            context_management={
+                "edits": [{"type": "clear_thinking_20251015", "keep": "all"}]
+            },
+            output_config={"effort": "high"},
+        )
+
+        print("Checking roles...")
+        assert [message.role for message in request.messages] == ["user", "system"]
+
+    @pytest.mark.parametrize(
+        "messages",
+        [
+            [{"role": "system", "content": "Leading instruction"}],
+            [
+                {"role": "user", "content": "Question"},
+                {"role": "assistant", "content": "Answer"},
+                {"role": "system", "content": "Misplaced instruction"},
+            ],
+            [
+                {"role": "user", "content": "Question"},
+                {"role": "system", "content": "First instruction"},
+                {"role": "system", "content": "Second instruction"},
+            ],
+        ],
+    )
+    def test_rejects_system_message_without_immediately_preceding_user(self, messages):
+        """
+        What it does: Rejects unsupported system-message placements.
+        Purpose: Prevent ambiguous or reordered compatibility lowering.
+        """
+        print("Action: Validating invalid system-message placement...")
+        with pytest.raises(
+            ValidationError,
+            match="must immediately follow a user message",
+        ):
+            AnthropicMessagesRequest(
+                model="claude-opus-5",
+                max_tokens=1024,
+                messages=messages,
+            )
+
+    def test_count_tokens_accepts_mid_conversation_system_message(self):
+        """
+        What it does: Validates the same message shape for count_tokens.
+        Purpose: Keep preflight token counting compatible with generation.
+        """
+        print("Setup: Creating token-count request with mid-conversation system...")
+        request = AnthropicCountTokensRequest(
+            model="claude-opus-5",
+            messages=[
+                AnthropicMessage(role="user", content="Question"),
+                AnthropicMessage(role="system", content="Late instruction"),
+            ],
+        )
+
+        print("Checking token-count request accepted both messages...")
+        assert len(request.messages) == 2
+        assert request.messages[1].role == "system"
 
 
 # ==================================================================================================

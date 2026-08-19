@@ -25,6 +25,7 @@ from kiro.converters_core import (
     ensure_alternating_roles,
     ensure_assistant_before_tool_results,
     strip_all_tool_content,
+    render_message_content,
     build_kiro_history,
     build_kiro_payload,
     process_tools_with_long_descriptions,
@@ -298,6 +299,77 @@ class TestExtractTextContent:
 
         print(f"Comparing result: Expected 'Loaded tools: done', Got '{result}'")
         assert result == "Loaded tools: done"
+
+
+# ==================================================================================================
+# Tests for render_message_content
+# ==================================================================================================
+
+class TestRenderMessageContent:
+    """Tests for rendering Kiro-compatible unified message content."""
+
+    def test_appends_mid_conversation_system_after_user_content(self):
+        """
+        What it does: Renders a user turn with an attached system instruction.
+        Purpose: Preserve instruction order without creating a synthetic turn.
+        """
+        print("Setup: User message with attached system instruction...")
+        message = UnifiedMessage(
+            role="user",
+            content="Original user content",
+            mid_conversation_system="Late privileged instruction",
+        )
+
+        print("Action: Rendering message content...")
+        result = render_message_content(message)
+
+        print("Checking content order and explicit compatibility tags...")
+        assert result == (
+            "Original user content\n\n"
+            "<mid_conversation_system>\n"
+            "Late privileged instruction\n"
+            "</mid_conversation_system>"
+        )
+
+    def test_returns_original_content_without_mid_conversation_system(self):
+        """
+        What it does: Renders a normal message without an attached instruction.
+        Purpose: Ensure existing OpenAI and Anthropic traffic is unchanged.
+        """
+        print("Setup: Normal user message...")
+        message = UnifiedMessage(role="user", content="Original user content")
+
+        print("Action: Rendering message content...")
+        result = render_message_content(message)
+
+        print("Checking original content remains byte-for-byte identical...")
+        assert result == "Original user content"
+
+    def test_strip_tool_content_preserves_mid_conversation_system(self):
+        """
+        What it does: Converts tool content to text while retaining the instruction.
+        Purpose: Prevent compatibility metadata loss when no tools are defined.
+        """
+        print("Setup: Tool-bearing user message with system instruction...")
+        message = UnifiedMessage(
+            role="user",
+            content="Tool result follows",
+            tool_results=[
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Done",
+                }
+            ],
+            mid_conversation_system="Continue carefully",
+        )
+
+        print("Action: Stripping structured tool content...")
+        result, converted = strip_all_tool_content([message])
+
+        print("Checking instruction survived the cloned message...")
+        assert converted is True
+        assert result[0].mid_conversation_system == "Continue carefully"
 
 
 # ==================================================================================================

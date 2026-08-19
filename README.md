@@ -672,7 +672,12 @@ curl http://localhost:8000/v1/messages \
   }'
 ```
 
-> **Note:** In Anthropic API, `system` is a separate field, not a message.
+> **Note:** The top-level `system` field remains the standard system prompt.
+> Kiro Gateway also accepts mid-conversation `system` messages immediately
+> after a `user` message for compatibility with current Claude Code clients.
+> Because Kiro history only supports `user` and `assistant` roles, the gateway
+> appends that instruction to the preceding user turn inside explicit
+> `<mid_conversation_system>` tags.
 
 </details>
 

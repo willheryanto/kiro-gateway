@@ -183,14 +183,47 @@ class AnthropicMessage(BaseModel):
     Message in Anthropic format.
 
     Attributes:
-        role: Message role (user or assistant)
+        role: Message role (user, assistant, or mid-conversation system)
         content: Message content (string or list of content blocks)
     """
 
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content: Union[str, List[ContentBlock]]
 
     model_config = {"extra": "allow"}
+
+
+def validate_mid_conversation_system_placement(
+    messages: List[AnthropicMessage],
+) -> List[AnthropicMessage]:
+    """
+    Validate placement of Anthropic mid-conversation system messages.
+
+    Anthropic permits a system message inside the messages array only when it
+    immediately follows a user turn. Kiro has no system role in conversation
+    history, so enforcing this placement also makes the compatibility lowering
+    unambiguous.
+
+    Args:
+        messages: Parsed Anthropic conversation messages.
+
+    Returns:
+        The original messages when all system messages are correctly placed.
+
+    Raises:
+        ValueError: If a system message does not immediately follow a user
+            message.
+    """
+    for index, message in enumerate(messages):
+        if message.role != "system":
+            continue
+
+        if index == 0 or messages[index - 1].role != "user":
+            raise ValueError(
+                "A mid-conversation system message must immediately follow a user message"
+            )
+
+    return messages
 
 
 # ==================================================================================================
@@ -340,6 +373,21 @@ class AnthropicMessagesRequest(BaseModel):
 
     model_config = {"extra": "allow"}
 
+    @model_validator(mode="after")
+    def validate_mid_conversation_system_messages(self) -> "AnthropicMessagesRequest":
+        """
+        Validate mid-conversation system message placement.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If a system message is not immediately after a user
+                message.
+        """
+        validate_mid_conversation_system_placement(self.messages)
+        return self
+
 
 class AnthropicCountTokensRequest(BaseModel):
     """
@@ -363,6 +411,21 @@ class AnthropicCountTokensRequest(BaseModel):
     tools: Optional[List[AnthropicTool]] = None
     
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def validate_mid_conversation_system_messages(self) -> "AnthropicCountTokensRequest":
+        """
+        Validate mid-conversation system message placement.
+
+        Returns:
+            The validated token-count request.
+
+        Raises:
+            ValueError: If a system message is not immediately after a user
+                message.
+        """
+        validate_mid_conversation_system_placement(self.messages)
+        return self
 
 
 # ==================================================================================================

@@ -885,6 +885,52 @@ class TestAnthropicRouterIntegration:
 
 class TestMessagesConversationHistory:
     """Tests for conversation history handling on /v1/messages endpoint."""
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_accepts_mid_conversation_system_from_claude_code(
+        self,
+        test_client,
+        valid_proxy_api_key,
+        stream,
+    ):
+        """
+        What it does: Sends Claude Code's user/system request shape to the route.
+        Purpose: Prevent local 422 validation failures in streaming and
+                 non-streaming modes.
+        """
+        print(f"Action: POST /v1/messages with stream={stream} and system turn...")
+        response = test_client.post(
+            "/v1/messages",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-opus-5",
+                "max_tokens": 64000,
+                "stream": stream,
+                "messages": [
+                    {"role": "user", "content": "Inspect the repository"},
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Follow repository instructions.",
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    },
+                ],
+                "thinking": {"type": "adaptive"},
+                "context_management": {
+                    "edits": [
+                        {"type": "clear_thinking_20251015", "keep": "all"}
+                    ]
+                },
+                "output_config": {"effort": "high"},
+            },
+        )
+
+        print(f"Status: {response.status_code}")
+        assert response.status_code != 422
     
     def test_accepts_multi_turn_conversation(self, test_client, valid_proxy_api_key):
         """
@@ -2148,6 +2194,44 @@ class TestCountTokensEndpoint:
         assert data["input_tokens"] > 0
         
         print(f"✅ Token count: {data['input_tokens']} tokens")
+
+    def test_count_tokens_with_mid_conversation_system(
+        self,
+        test_client,
+        valid_proxy_api_key,
+    ):
+        """
+        What it does: Counts a user turn followed by a system instruction.
+        Purpose: Keep Claude Code token preflight compatible with generation.
+        """
+        print("Setup: Token-count request with mid-conversation system...")
+        request_data = {
+            "model": "claude-opus-5",
+            "messages": [
+                {"role": "user", "content": "Inspect the repository"},
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Follow repository instructions.",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+            ],
+        }
+
+        print("Action: POST /v1/messages/count_tokens...")
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json=request_data,
+        )
+
+        print(f"Status: {response.status_code}")
+        assert response.status_code == 200
+        assert response.json()["input_tokens"] > 0
     
     def test_count_tokens_with_tools(self, test_client, valid_proxy_api_key):
         """

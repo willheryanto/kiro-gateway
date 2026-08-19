@@ -286,6 +286,8 @@ def convert_anthropic_messages(
     total_tool_calls = 0
     total_tool_results = 0
     total_images = 0
+    total_mid_conversation_system = 0
+    previous_role: Optional[str] = None
 
     for msg in messages:
         role = msg.role
@@ -293,6 +295,17 @@ def convert_anthropic_messages(
 
         # Extract text content
         text_content = convert_anthropic_content_to_text(content)
+
+        if role == "system":
+            if previous_role != "user" or not unified_messages:
+                raise ValueError(
+                    "A mid-conversation system message must immediately follow a user message"
+                )
+
+            unified_messages[-1].mid_conversation_system = text_content
+            total_mid_conversation_system += 1
+            previous_role = role
+            continue
 
         # Extract tool-related data and images based on role
         tool_calls = None
@@ -334,12 +347,19 @@ def convert_anthropic_messages(
             images=images if images else None,
         )
         unified_messages.append(unified_msg)
+        previous_role = role
 
     # Log summary if any tool content or images were found
     if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
         logger.debug(
             f"Converted {len(messages)} Anthropic messages: "
             f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
+        )
+
+    if total_mid_conversation_system > 0:
+        logger.info(
+            f"Lowered {total_mid_conversation_system} Anthropic mid-conversation "
+            f"system message(s) into Kiro user turns"
         )
 
     return unified_messages
