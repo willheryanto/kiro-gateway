@@ -166,8 +166,31 @@ def generate_conversation_id(messages: List[Dict[str, Any]] = None) -> str:
 def generate_tool_call_id() -> str:
     """
     Generates a unique ID for tool call.
-    
+
     Returns:
         ID in format "call_{uuid_hex[:8]}"
     """
     return f"call_{uuid.uuid4().hex[:8]}"
+
+
+def generate_response_id() -> str:
+    """
+    Generates a unique ID for a Responses API response.
+
+    Returns:
+        ID in format "resp_{uuid_hex}"
+    """
+    return f"resp_{uuid.uuid4().hex}"
+
+
+def generate_output_item_id(prefix: str) -> str:
+    """
+    Generates a unique ID for a Responses API output item.
+
+    Args:
+        prefix: Item type prefix, e.g. "msg" or "fc"
+
+    Returns:
+        ID in format "{prefix}_{uuid_hex}"
+    """
+    return f"{prefix}_{uuid.uuid4().hex}"

@@ -1047,7 +1047,7 @@ class TestAnthropicHTTPClientSelection:
     requests use shared client for connection pooling.
     """
     
-    @patch('kiro.routes_anthropic.KiroHttpClient')
+    @patch('kiro.route_orchestrator.KiroHttpClient')
     def test_streaming_uses_per_request_client(
         self,
         mock_kiro_http_client_class,
@@ -1091,7 +1091,7 @@ class TestAnthropicHTTPClientSelection:
             "Streaming should use per-request client"
         print("✅ Anthropic streaming correctly uses per-request client")
     
-    @patch('kiro.routes_anthropic.KiroHttpClient')
+    @patch('kiro.route_orchestrator.KiroHttpClient')
     def test_non_streaming_uses_shared_client(
         self,
         mock_kiro_http_client_class,
